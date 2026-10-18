@@ -1,3 +1,4 @@
+import {checkCentralAppEntitlement} from './central-app-access.js';
 const encoder = new TextEncoder();
 const STARRY_ID_ORIGIN = 'https://id.starry.phd';
 const APP_ID = 'downloadstarry';
@@ -111,6 +112,8 @@ async function callback(request, env) {
     if (!member || String(member.status) !== 'active' || String(member.membershipStatus) !== 'active') {
       return Response.redirect(`${ownOrigin}/account?starry=error`, 302);
     }
+    const access=await checkCentralAppEntitlement(env.STARRY_ID_DB,String(ticket.userId),APP_ID);
+    if(!access.allowed)return Response.redirect(`${ownOrigin}/account?starry=denied`,302);
     const token = await createSession(env, String(ticket.userId));
     return new Response(null, {
       status: 302,
