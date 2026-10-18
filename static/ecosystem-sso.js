@@ -54,6 +54,7 @@
         headers: {Accept: 'application/json'}
       });
       const data = await readJson(response);
+      if (response.status === 403 && data?.code === 'APP_ACCESS_DENIED') return {authenticated: false, denied: true};
       return response.ok && data?.authenticated ? data : {authenticated: false};
     } catch {
       return null;
@@ -111,6 +112,19 @@
     return text(data.code);
   }
 
+  function showDeniedMask() {
+    if (document.getElementById('starry-access-denied')) return;
+    const mask = document.createElement('div');
+    mask.id = 'starry-access-denied';
+    mask.setAttribute('role','alert');
+    mask.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(0,0,0,.86);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);color:white;text-align:center';
+    const title = document.createElement('h1');
+    title.textContent = '您沒有使用權限';
+    title.style.cssText = 'font:800 clamp(23px,5vw,31px)/1.4 system-ui,sans-serif';
+    mask.appendChild(title);
+    document.body.appendChild(mask);
+  }
+
   async function sync(force = false) {
     const now = Date.now();
     if (syncing || (!force && now - lastSync < MIN_SYNC_MS)) return;
@@ -118,7 +132,8 @@
     lastSync = now;
     try {
       const [local, central] = await Promise.all([localState(), centralState()]);
-      if (central === null) return;
+      if (local?.denied) { showDeniedMask(); return; }
+      if (central === null || local === null) return;
 
       if (!central?.authenticated || !central?.user?.id) {
         if (local?.authenticated) {
