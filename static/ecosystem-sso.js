@@ -77,14 +77,15 @@
 
   async function localLogout() {
     try {
-      await originalFetch(LOCAL_LOGOUT, {
+      const response = await originalFetch(LOCAL_LOGOUT, {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
         headers: {'Content-Type': 'application/json'},
         body: '{}'
       });
-    } catch {}
+      return response.ok;
+    } catch { return false; }
   }
 
   async function centralLogout() {
@@ -108,7 +109,10 @@
       body: '{}'
     });
     const data = await readJson(response);
-    if (!response.ok || !data?.code) throw new Error(data?.error || '無法建立繁星通行證登入票證');
+    if (!response.ok || !data?.code) {
+      if (response.status === 403) showDeniedMask();
+      throw new Error(data?.error || '無法建立繁星通行證登入票證');
+    }
     return text(data.code);
   }
 
@@ -137,8 +141,7 @@
 
       if (!central?.authenticated || !central?.user?.id) {
         if (local?.authenticated) {
-          await localLogout();
-          reloadOnce();
+          if (await localLogout()) reloadOnce();
         }
         return;
       }
