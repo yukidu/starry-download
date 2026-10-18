@@ -1,5 +1,4 @@
-import {authenticatedDownloadStarryMember} from './favorites.js';
-import {checkCentralAppEntitlement} from './central-app-access.js';
+import {evaluateCentralAppEntitlementRow} from './central-app-access.js';
 
 const APP_ID = 'downloadstarry';
 const PAGE_ROUTES = new Set(['/', '/account', '/history', '/install', '/report']);
@@ -24,14 +23,39 @@ export function isDownloadPageRequest(url, method) {
   return ['GET', 'HEAD'].includes(method) && PAGE_ROUTES.has(url.pathname);
 }
 
+function sessionCookieToken(request) {
+  const raw = request.headers.get('Cookie') || '';
+  for (const part of raw.split(';')) {
+    const [name,...rest] = part.trim().split('=');
+    if (name==='downloadstarry_session') return rest.join('=').trim();
+  }
+  return '';
+}
+async function sessionHash(token) {
+  const bytes=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token)));
+  return Array.from(bytes,byte=>byte.toString(16).padStart(2,'0')).join('');
+}
+
 export async function resolveDownloadAccess(request, env) {
-  if (!env.STARRY_ID_DB) return {status: 'unavailable'};
-  const member = await authenticatedDownloadStarryMember(request, env);
-  if (!member?.id) return {status: 'login_required'};
-  const result = await checkCentralAppEntitlement(env.STARRY_ID_DB, member.id, APP_ID);
-  return result.allowed
-    ? {status: 'allowed', userId: member.id}
-    : {status: 'denied', code: result.code};
+  if (!env.STARRY_ID_DB) return {status:'unavailable'};
+  const token=sessionCookieToken(request);
+  if (token.length<30) return {status:'login_required'};
+  // One central D1 read is sufficient: verify a live Download session and
+  // the authoritative App decision at once. This matters for frequent
+  // progress/file polling and remains immediately revocable by an admin.
+  const row=await env.STARRY_ID_DB.prepare(`SELECT s.userId,s.expiresAt,
+      u.status,u.createdAt,m.status AS membershipStatus,a.decision
+    FROM downloadstarry_sessions s
+    JOIN users u ON u.id=s.userId
+    LEFT JOIN app_memberships m ON m.userId=u.id AND m.appId=?
+    LEFT JOIN starry_app_access_decisions a ON a.userId=u.id AND a.appId=?
+    WHERE s.tokenHash=? LIMIT 1`)
+    .bind(APP_ID,APP_ID,await sessionHash(token)).first();
+  if (!row || Number(row.expiresAt||0)<=Date.now()) return {status:'login_required'};
+  const access=evaluateCentralAppEntitlementRow(row);
+  return access.allowed
+    ? {status:'allowed',userId:String(row.userId)}
+    : {status:'denied',code:access.code};
 }
 
 function gateHtml(status) {
