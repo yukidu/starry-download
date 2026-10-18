@@ -20,15 +20,16 @@ function dbFor(decision, options={}) {
     prepare(sql) {
       readQueries.push(sql);
       assert.match(sql,/SELECT/i,'access decisions must only read membership, never change it');
+      assert.match(sql,/JOIN users u ON u.id=s.userId/);
+      assert.match(sql,/FROM downloadstarry_sessions s/);
       assert.doesNotMatch(sql,/INSERT|UPDATE|DELETE|DROP/i);
       return {bind(...params) {
+        assert.deepEqual(params.slice(0,2),['downloadstarry','downloadstarry']);
+        assert.match(params[2],/^[a-f0-9]{64}$/);
         return {async first(){
-          if(sql.includes('FROM downloadstarry_sessions')) {
-            return {userId:'starry-person',expiresAt:Date.now()+600000,status:options.sessionStatus||'active'};
-          }
-          assert.match(sql,/FROM users u/);
-          assert.deepEqual(params,['downloadstarry','downloadstarry','starry-person']);
-          return {status:options.accountStatus||'active',createdAt:options.createdAt||STARRY_APP_GRANT_CUTOFF-20000,
+          return {userId:'starry-person',expiresAt:options.expiresAt||Date.now()+600000,
+            status:options.accountStatus||'active',
+            createdAt:options.createdAt||STARRY_APP_GRANT_CUTOFF-20000,
             membershipStatus:options.membershipStatus===undefined?'active':options.membershipStatus,
             decision};
         }};
@@ -37,6 +38,7 @@ function dbFor(decision, options={}) {
   };
   return {db,readQueries};
 }
+
 function request(path='/',cookie=COOKIE,method='GET') {
   return new Request('https://download.starry.phd'+path,{method,headers:cookie?{Cookie:cookie}:{}});
 }
@@ -80,7 +82,7 @@ test('a denied signed-in member sees ONLY the forbidden message, never a retryin
   const {db,readQueries}=dbFor('deny');
   const result=await resolveDownloadAccess(request('/'),{STARRY_ID_DB:db});
   assert.deepEqual(result,{status:'denied',code:'APP_ACCESS_DENIED'});
-  assert.equal(readQueries.length,2);
+  assert.equal(readQueries.length,1);
   const response=accessDeniedResponse(request('/'),result);
   assert.equal(response.status,403);
   const html=await response.text();
@@ -111,7 +113,7 @@ test('valid central grants and pre-cutoff existing members are admitted without 
     const result=await resolveDownloadAccess(request('/'),{STARRY_ID_DB:db});
     assert.equal(result.status,'allowed');
     assert.equal(result.userId,'starry-person');
-    assert.equal(readQueries.length,2);
+    assert.equal(readQueries.length,1);
   }
   const {db}=dbFor(null,{createdAt:STARRY_APP_GRANT_CUTOFF+2000});
   assert.equal((await resolveDownloadAccess(request('/'),{STARRY_ID_DB:db})).status,'denied');
