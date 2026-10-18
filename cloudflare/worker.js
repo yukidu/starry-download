@@ -1,7 +1,7 @@
 import {Container} from '@cloudflare/containers';
 import {digest, handleRequest} from './access.js';
 import {handleCentralSso} from './central-sso.js';
-import {checkCentralAppEntitlement} from './central-app-access.js';
+import {shouldCheckDownloadAccess, isDownloadPageRequest, resolveDownloadAccess, accessDeniedResponse} from './download-access-gate.js';
 import {handleDownloadHistoryRequest, recordDownloadStart} from './history.js';
 import {handlePushRequest, notifyReportCreated, saveReportPushState} from './push.js';
 import {enforceMemberReport, handleReportRepairRequest} from './report-repair.js';
@@ -59,25 +59,19 @@ async function fetchHandler(request, env, ctx) {
 
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
-  // Keep public downloads and visitor pages public; protect only signed-in
-  // member features. Old sessions are checked each time, so a revoked grant
-  // takes effect without waiting for their cookie to expire.
-  const memberOnlyPath=url.pathname==='/account' || url.pathname==='/history' ||
-    url.pathname==='/api/favorites' || url.pathname.startsWith('/api/download-history') ||
-    url.pathname.startsWith('/api/advanced/');
-  if(memberOnlyPath){
-    try{
-      const member=await authenticatedDownloadStarryMember(request,env);
-      if(member?.id){
-        const access=await checkCentralAppEntitlement(env.STARRY_ID_DB,member.id,'downloadstarry');
-        if(!access.allowed){
-          if(url.pathname==='/account'||url.pathname==='/history'){
-            return new Response('<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><main style="max-width:460px;margin:15vh auto;text-align:center;font-family:system-ui"><h1>您沒有使用權限</h1><p>請聯絡繁星管理員。</p><a href="https://id.starry.phd/">前往 Starry ID</a></main></html>',{status:403,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'}});
-          }
-          return Response.json({error:'您沒有使用權限',code:'APP_ACCESS_DENIED'},{status:403,headers:{'Cache-Control':'no-store'}});
-        }
-      }
-    }catch(error){console.error('Download Starry central access unavailable',error);return Response.json({error:'會員權限驗證暫時無法使用'},{status:503});}
+  // Authoritative check BEFORE rendering any App page or running any
+  // download/report/member API. A blocked account must never start the
+  // container or load the old automatic SSO synchronization script.
+  if (shouldCheckDownloadAccess(url,method)) {
+    if (isDownloadPageRequest(url,method) && url.searchParams.get('starry')==='denied')
+      return accessDeniedResponse(request,{status:'denied'});
+    try {
+      const access=await resolveDownloadAccess(request,env);
+      if(access.status!=='allowed') return accessDeniedResponse(request,access);
+    } catch(error) {
+      console.error('Download Starry access gate temporarily unavailable',error);
+      return accessDeniedResponse(request,{status:'unavailable'});
+    }
   }
   const reportManagementRequest =
     (url.pathname === '/report' && ['GET', 'HEAD'].includes(method)) ||

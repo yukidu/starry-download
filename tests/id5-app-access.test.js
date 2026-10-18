@@ -11,10 +11,12 @@ test('download grants and denies correctly without removing old memberships',asy
  assert.equal((await checkCentralAppEntitlement(db({status:'active',createdAt:newer,decision:'allow',membershipStatus:null}),'u1','downloadstarry')).allowed,true);
  assert.equal((await checkCentralAppEntitlement(db({status:'blocked',createdAt:old,decision:'allow',membershipStatus:null}),'u1','downloadstarry')).allowed,false);
 });
-test('anonymous downloads stay public while member-only paths are verified',()=>{
+test('no public download: all App pages and APIs now require central member access',()=>{
  const s=readFileSync(new URL('../cloudflare/worker.js',import.meta.url),'utf8');
- assert.match(s,/const memberOnlyPath/);
- assert.match(s,/checkCentralAppEntitlement/);
- assert.match(s,/APP_ACCESS_DENIED/);
- assert.doesNotMatch(s,/url\.pathname==='\/api\/download'\s*\|\|/);
+ const gate=readFileSync(new URL('../cloudflare/download-access-gate.js',import.meta.url),'utf8');
+ assert.match(s,/shouldCheckDownloadAccess\(url,method\)/);
+ assert.match(s,/resolveDownloadAccess\(request,env\)/);
+ assert.match(s,/accessDeniedResponse\(request,access\)/);
+ assert.match(gate,/APP_ID = 'downloadstarry'/);
+ assert.doesNotMatch(s,/const memberOnlyPath/);
 });

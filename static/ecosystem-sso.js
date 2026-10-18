@@ -54,6 +54,7 @@
         headers: {Accept: 'application/json'}
       });
       const data = await readJson(response);
+      if (response.status === 403 && data?.code === 'APP_ACCESS_DENIED') return {authenticated: false, denied: true};
       return response.ok && data?.authenticated ? data : {authenticated: false};
     } catch {
       return null;
@@ -76,14 +77,15 @@
 
   async function localLogout() {
     try {
-      await originalFetch(LOCAL_LOGOUT, {
+      const response = await originalFetch(LOCAL_LOGOUT, {
         method: 'POST',
         credentials: 'include',
         cache: 'no-store',
         headers: {'Content-Type': 'application/json'},
         body: '{}'
       });
-    } catch {}
+      return response.ok;
+    } catch { return false; }
   }
 
   async function centralLogout() {
@@ -107,8 +109,24 @@
       body: '{}'
     });
     const data = await readJson(response);
-    if (!response.ok || !data?.code) throw new Error(data?.error || '無法建立繁星通行證登入票證');
+    if (!response.ok || !data?.code) {
+      if (response.status === 403) showDeniedMask();
+      throw new Error(data?.error || '無法建立繁星通行證登入票證');
+    }
     return text(data.code);
+  }
+
+  function showDeniedMask() {
+    if (document.getElementById('starry-access-denied')) return;
+    const mask = document.createElement('div');
+    mask.id = 'starry-access-denied';
+    mask.setAttribute('role','alert');
+    mask.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(0,0,0,.86);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);color:white;text-align:center';
+    const title = document.createElement('h1');
+    title.textContent = '您沒有使用權限';
+    title.style.cssText = 'font:800 clamp(23px,5vw,31px)/1.4 system-ui,sans-serif';
+    mask.appendChild(title);
+    document.body.appendChild(mask);
   }
 
   async function sync(force = false) {
@@ -118,12 +136,12 @@
     lastSync = now;
     try {
       const [local, central] = await Promise.all([localState(), centralState()]);
-      if (central === null) return;
+      if (local?.denied) { showDeniedMask(); return; }
+      if (central === null || local === null) return;
 
       if (!central?.authenticated || !central?.user?.id) {
         if (local?.authenticated) {
-          await localLogout();
-          reloadOnce();
+          if (await localLogout()) reloadOnce();
         }
         return;
       }

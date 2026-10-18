@@ -6,6 +6,12 @@ export async function checkCentralAppEntitlement(db,centralUserId,appId) {
     LEFT JOIN app_memberships m ON m.userId=u.id AND m.appId=?
     LEFT JOIN starry_app_access_decisions a ON a.userId=u.id AND a.appId=?
     WHERE u.id=? LIMIT 1`).bind(appId,appId,centralUserId).first();
+  return evaluateCentralAppEntitlementRow(row);
+}
+
+// Shared evaluator allows a protected App route to join the session and the
+// central entitlement in ONE read, saving D1 requests during download polling.
+export function evaluateCentralAppEntitlementRow(row) {
   if (!row || row.status!=='active') return {allowed:false,code:'ACCOUNT_INACTIVE'};
   if (row.decision==='deny') return {allowed:false,code:'APP_ACCESS_DENIED'};
   if (row.membershipStatus && row.membershipStatus!=='active') return {allowed:false,code:'MEMBERSHIP_BLOCKED'};
