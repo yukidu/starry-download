@@ -79,7 +79,7 @@ async function activeMember(env, userId) {
   return env.STARRY_ID_DB.prepare(`
     SELECT u.id, u.status, am.status AS membershipStatus
     FROM users u
-    JOIN app_memberships am ON am.userId = u.id AND am.appId = ?
+    LEFT JOIN app_memberships am ON am.userId = u.id AND am.appId = ?
     WHERE u.id = ?
     LIMIT 1
   `).bind(APP_ID, userId).first();
@@ -99,6 +99,21 @@ async function createSession(env, userId) {
   return token;
 }
 
+function deniedRedirect(origin) {
+  // A rejected sign-in must end on a stable no-script page. Clear any older
+  // local cookie so a different previously signed-in account cannot remain
+  // active behind the access-denied screen.
+  return new Response(null, {
+    status:302,
+    headers:{
+      'Location':origin+'/?starry=denied',
+      'Set-Cookie':SESSION_COOKIE+'=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0',
+      'Cache-Control':'no-store',
+      'Referrer-Policy':'no-referrer'
+    }
+  });
+}
+
 async function callback(request, env) {
   const ownOrigin = new URL(request.url).origin;
   const code = new URL(request.url).searchParams.get('code')?.trim() || '';
@@ -109,11 +124,11 @@ async function callback(request, env) {
     const ticket = await consumeCode(env, code);
     if (!ticket?.userId) return Response.redirect(`${ownOrigin}/account?starry=error`, 302);
     const member = await activeMember(env, String(ticket.userId));
-    if (!member || String(member.status) !== 'active' || String(member.membershipStatus) !== 'active') {
-      return Response.redirect(`${ownOrigin}/account?starry=error`, 302);
-    }
+    if (!member || String(member.status) !== 'active') return deniedRedirect(ownOrigin);
+    // Central deny and inactive membership outrank any old local session.
+    // An explicit allow can legitimately exist before App self-enrolment.
     const access=await checkCentralAppEntitlement(env.STARRY_ID_DB,String(ticket.userId),APP_ID);
-    if(!access.allowed)return Response.redirect(`${ownOrigin}/account?starry=denied`,302);
+    if(!access.allowed)return deniedRedirect(ownOrigin);
     const token = await createSession(env, String(ticket.userId));
     return new Response(null, {
       status: 302,
