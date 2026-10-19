@@ -35,8 +35,13 @@ async function enhanceProductionPage(response) {
   html = html.replaceAll('繁星下載', '繁星捕手').replaceAll('Starry ID', '繁星通行證');
   // Install the lazy gesture gate BEFORE the old site scripts. Anonymous
   // visitors see the actual landing page, but interactions are checked once.
+  // Shared Starry gate tokens and renderer are loaded before interaction
+  // code. This keeps pending/denied/login visuals identical across Apps.
+  if (!html.includes('/static/starry-access.css')) {
+    html = html.replace('</head>', '<link rel="stylesheet" href="/static/starry-access.css"></head>');
+  }
   if (!html.includes('/static/starry-account-switch.js')) {
-    html = html.replace('</body>', '<script src="/static/starry-account-switch.js"></script><script src="/static/access-gate.js"></script></body>');
+    html = html.replace('</body>', '<script src="/static/starry-access-ui.js"></script><script src="/static/starry-account-switch.js"></script><script src="/static/access-gate.js"></script></body>');
   }
   if (!html.includes('/static/brand-sync.js')) {
     html = html.replace('</body>', '<script src="/static/brand-sync.js"></script><script src="/static/ecosystem-sso.js"></script></body>');
