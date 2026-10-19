@@ -94,7 +94,7 @@ function gateHtml(status) {
 html,body{min-height:100%;margin:0}
 body{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;color:#fff;background:radial-gradient(ellipse at 30% 20%,#344864 0%,#121923 58%,#090b0d 100%)}
 .access-mask{position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;
-  background:rgba(0,0,0,.80);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding:24px;box-sizing:border-box}
+  background:rgba(0,0,0,.60);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding:24px;box-sizing:border-box}
 .access-content{width:min(440px,100%);text-align:center}
 .access-lock{width:46px;height:46px;margin:0 auto 18px;color:#e9a9b0}
 h1{font-size:clamp(23px,5vw,31px);line-height:1.35;letter-spacing:.03em;margin:0;font-weight:800}
