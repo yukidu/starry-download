@@ -92,6 +92,8 @@ test('denied signed-in member gets 80-percent gate and a global switch-account c
   assert.match(html,/static\/starry-account-switch\.js/);
   assert.doesNotMatch(html,/請先登入|請聯絡|ecosystem-sso\.js/);
   assert.equal(response.headers.get('X-Frame-Options'),'DENY');
+  const privateGate=accessDeniedResponse(request('/account'),result);
+  assert.match(privateGate.headers.get('Content-Security-Policy'),/connect-src 'self' https:\/\/id\.starry\.phd/);
 });
 
 test('denied, anonymous and interrupted API operations fail closed with clear statuses',async()=>{
