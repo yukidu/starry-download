@@ -26,7 +26,7 @@ export function isDownloadPageRequest(url, method) {
 }
 
 export function downloadAccessStatusResponse(result) {
-  const status=result.status==='allowed'?200:
+  const status=result.status==='allowed'||result.status==='guest_allowed'?200:
     result.status==='login_required'?401:result.status==='unavailable'?503:403;
   return Response.json({status:result.status, ...(result.status==='allowed' ? {userId:result.userId} : {})},{
     status,
@@ -52,10 +52,31 @@ async function sessionHash(token) {
   return Array.from(bytes,byte=>byte.toString(16).padStart(2,'0')).join('');
 }
 
-export async function resolveDownloadAccess(request, env) {
+/**
+ * Guests can be granted only the explicitly tested homepage-interaction
+ * capability. This method is called ONLY from the public access-status API.
+ * Private routes, downloader jobs and member APIs NEVER use this override.
+ */
+async function guestHomepageAllowed(db){
+  try{
+    const row=await db.prepare(
+      'SELECT allowed FROM starry_guest_app_policies WHERE appId=? LIMIT 1'
+    ).bind(APP_ID).first();
+    return row?.allowed===1;
+  }catch{
+    // Central table may not exist during rollout. Missing policy = deny.
+    return false;
+  }
+}
+
+export async function resolveDownloadAccess(request, env, options={}) {
   if (!env.STARRY_ID_DB) return {status:'unavailable'};
   const token=sessionCookieToken(request);
-  if (token.length<30) return {status:'login_required'};
+  if (token.length<30) {
+    if(options.publicInteraction && await guestHomepageAllowed(env.STARRY_ID_DB))
+      return {status:'guest_allowed'};
+    return {status:'login_required'};
+  }
   // One central D1 read is sufficient: verify a live Download session and
   // the authoritative App decision at once. This matters for frequent
   // progress/file polling and remains immediately revocable by an admin.
