@@ -26,7 +26,7 @@ export function isDownloadPageRequest(url, method) {
 }
 
 export function downloadAccessStatusResponse(result) {
-  const status=result.status==='allowed'?200:
+  const status=result.status==='allowed'||result.status==='guest_allowed'?200:
     result.status==='login_required'?401:result.status==='unavailable'?503:403;
   return Response.json({status:result.status, ...(result.status==='allowed' ? {userId:result.userId} : {})},{
     status,
@@ -52,10 +52,31 @@ async function sessionHash(token) {
   return Array.from(bytes,byte=>byte.toString(16).padStart(2,'0')).join('');
 }
 
-export async function resolveDownloadAccess(request, env) {
+/**
+ * Guests can be granted only the explicitly tested homepage-interaction
+ * capability. This method is called ONLY from the public access-status API.
+ * Private routes, downloader jobs and member APIs NEVER use this override.
+ */
+async function guestHomepageAllowed(db){
+  try{
+    const row=await db.prepare(
+      'SELECT allowed FROM starry_guest_app_policies WHERE appId=? LIMIT 1'
+    ).bind(APP_ID).first();
+    return row?.allowed===1;
+  }catch{
+    // Central table may not exist during rollout. Missing policy = deny.
+    return false;
+  }
+}
+
+export async function resolveDownloadAccess(request, env, options={}) {
   if (!env.STARRY_ID_DB) return {status:'unavailable'};
   const token=sessionCookieToken(request);
-  if (token.length<30) return {status:'login_required'};
+  if (token.length<30) {
+    if(options.publicInteraction && await guestHomepageAllowed(env.STARRY_ID_DB))
+      return {status:'guest_allowed'};
+    return {status:'login_required'};
+  }
   // One central D1 read is sufficient: verify a live Download session and
   // the authoritative App decision at once. This matters for frequent
   // progress/file polling and remains immediately revocable by an admin.
@@ -75,39 +96,27 @@ export async function resolveDownloadAccess(request, env) {
 }
 
 function gateHtml(status) {
-  const login = status === 'login_required';
-  const unavailable = status === 'unavailable';
-  const title = unavailable ? '權限驗證暫時無法使用' : '您尚未開通本服務';
-  const sub = '';
-  const action = unavailable ? '' :
-    '<div class="sign-in"><button type="button" id="access-action" class="login-button">'+
-    (login?'登入':'切換身分')+
-    '</button><div id="google-login" hidden></div><a id="fallback-login" href="/api/auth/starry/login?choose=1" hidden>選擇其他 Google 帳號</a></div><p id="login-status" role="status" hidden></p>';
-  const script = unavailable ? '' :
-    '<script src="/static/starry-account-switch.js"></script><script src="/static/access-gate.js"></script>';
+  // The server fallback uses EXACTLY the same stylesheet and markup as the
+  // hydrated overlay; there is no second copy of opacity/spacing/blur.
+  // Avoid a dark standalone background that looks different from the live
+  // homepage. A neutral surface behind 60% black is intentional.
+  const title=status==='unavailable'?'權限驗證暫時無法使用':'您尚未開通本服務';
+  const login=status==='login_required';
+  const action=status==='unavailable'?'':'<button type="button" class="starry-access-primary">'+(login?'登入':'切換身分')+'</button>';
+  const script=status==='unavailable'?'':'<script src="/static/starry-access-ui.js"></script><script src="/static/starry-account-switch.js"></script><script src="/static/access-gate.js"></script>';
   return `<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
 <title>繁星下載｜使用權限</title>
-<style>
-html,body{min-height:100%;margin:0}
-body{font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif;color:#fff;background:radial-gradient(ellipse at 30% 20%,#344864 0%,#121923 58%,#090b0d 100%)}
-.access-mask{position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;
-  background:rgba(0,0,0,.60);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);padding:24px;box-sizing:border-box}
-.access-content{width:min(440px,100%);text-align:center}
-.access-lock{width:46px;height:46px;margin:0 auto 18px;color:#e9a9b0}
-h1{font-size:clamp(23px,5vw,31px);line-height:1.35;letter-spacing:.03em;margin:0;font-weight:800}
-.sub{font-size:18px;line-height:1.55;margin:16px 0 0}
-.sign-in{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:26px;min-height:42px}
-.login-button{display:inline-flex;align-items:center;justify-content:center;min-width:185px;
-  padding:12px 22px;border:0;border-radius:12px;background:#f3f6ff;color:#101827;font:750 16px system-ui,sans-serif;cursor:pointer}
-#login-status{font-size:13px;line-height:1.5;color:#efc7cc;margin-top:16px}
-[hidden]{display:none!important}
-</style></head><body><div class="access-mask" id="starry-access-gate" data-status="${status}" role="main">
-<main class="access-content">
-<svg class="access-lock" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-<h1>${title}</h1>${sub}${action}</main></div>${script}</body></html>`;
+<link rel="stylesheet" href="/static/starry-access.css">
+<style>html,body{min-height:100%;margin:0;background:#18202c;color:#fff}</style>
+</head><body>
+<div class="starry-access-overlay" id="starry-access-gate" data-status="${status}" role="main">
+<main class="starry-access-panel">
+<div class="starry-access-lock" aria-hidden="true">🔒</div>
+<h1>${title}</h1>${action}
+</main></div>${script}</body></html>`;
 }
 
 /**
@@ -137,6 +146,6 @@ export function accessDeniedResponse(request, result) {
   return new Response(request.method==='HEAD'?null:gateHtml(result.status),{
     status:responseStatus,
     headers:{...headers,'Content-Type':'text/html; charset=utf-8',
-      'Content-Security-Policy':"default-src 'none'; script-src 'self' https://accounts.google.com; style-src 'unsafe-inline'; img-src 'self' https://accounts.google.com data:; frame-src https://accounts.google.com; connect-src 'self' https://id.starry.phd; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}
+      'Content-Security-Policy':"default-src 'none'; script-src 'self' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' https://accounts.google.com data:; frame-src https://accounts.google.com; connect-src 'self' https://id.starry.phd; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}
   });
 }

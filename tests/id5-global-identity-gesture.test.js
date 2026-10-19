@@ -70,6 +70,19 @@ test('A globally switched but forbidden identity remains selected centrally with
   assert.deepEqual(env.navigations,[]);
 });
 
+test('Approved anonymous visitor may interact with the homepage, but never gets a member session',async()=>{
+  const guest=sharedHarness({local:'guest_allowed',central:null});
+  assert.equal(await guest.identity.check(),'allowed');
+  assert.deepEqual(guest.calls.map(x=>x.url),[
+    '/api/download-access/status','https://id.starry.phd/api/ecosystem/session'
+  ]);
+  assert.equal(guest.navigations.length,0);
+  const signed=sharedHarness({local:'guest_allowed',central:'member-not-granted'});
+  assert.equal(await signed.identity.check(),'denied',
+    'Logged-in account denied member rights must not bypass by acting as guest');
+  assert.ok(signed.calls.some(x=>x.url.includes('/ticket')));
+});
+
 test('Already synchronized central/local authorized identity requires no extra ticket or logout',async()=>{
   const env=sharedHarness({ticketAllowed:true,local:'allowed',central:'u-new'});
   assert.equal(await env.identity.check(),'allowed');
@@ -137,9 +150,9 @@ function gestureHarness(){
     },
     addEventListener:(name,handler)=>{events[name]=handler;}
   };
-  vm.runInNewContext(source('static/access-gate.js'),{
-    window,document,Date,Promise
-  });
+  const vmContext=vm.createContext({window,document,Date,Promise});
+  vm.runInContext(source('static/starry-access-ui.js'),vmContext);
+  vm.runInContext(source('static/access-gate.js'),vmContext);
   const mask=()=>document.getElementById('starry-access-gate');
   const children=()=>mask()?.children?.[0]?.children||[];
   const heading=()=>children().find(node=>node.tagName==='h1')?.textContent;
@@ -161,8 +174,8 @@ test('Click paints the 60-percent checking overlay synchronously before any auth
   const screen=gestureHarness();
   assert.equal(screen.mask(),null,'No overlay or rights check on page load');
   assert.deepEqual(screen.calls,[]);
-  const css=screen.document.getElementById('starry-download-access-css');
-  assert.match(css.textContent,/background:rgba\(0,0,0,\.60\)/);
+  const css=source('static/starry-access.css');
+  assert.match(css,/--starry-access-black-opacity: \.60/);
   screen.click();
   assert.equal(screen.heading(),'正在確認權限…','Pending screen must appear within the click handler');
   assert.equal(screen.button(),undefined,'Pending auth cannot falsely show login/switch actions');
