@@ -1,0 +1,41 @@
+/* Starry Access Overlay v1 — shared design tokens, copy this file unchanged across Apps.
+   THE ONLY EDIT POINT for overlay opacity, type, spacing and button dimensions.
+   Overlay opacity is 60% BLACK. Do not add blur or page-dependent backgrounds:
+   both loading and denied states use this exact same component.
+   See docs/STARRY_ACCESS_KIT.md for integration, security and rollback guidance.
+ */
+:root {
+  --starry-access-black-opacity: .60;
+  --starry-access-overlay: rgba(0,0,0,var(--starry-access-black-opacity));
+  --starry-access-text: #fff;
+  --starry-access-button-bg: #f3f6ff;
+  --starry-access-button-text: #101827;
+  --starry-access-radius: 12px;
+  --starry-access-max-width: 430px;
+  --starry-access-heading: clamp(23px,5vw,31px);
+}
+.starry-access-overlay {
+  position:fixed;inset:0;z-index:2147483647;
+  display:grid;place-items:center;box-sizing:border-box;padding:24px;
+  background:var(--starry-access-overlay);color:var(--starry-access-text);
+  text-align:center;font-family:system-ui,-apple-system,sans-serif;
+  /* Blur MUST NOT be applied: it alters perceived opacity between screens. */
+}
+.starry-access-panel{position:relative;width:min(var(--starry-access-max-width),100%);padding:16px}
+.starry-access-panel h1{
+  font-size:var(--starry-access-heading);line-height:1.4;font-weight:800;margin:14px 0 24px
+}
+.starry-access-lock{font-size:38px;line-height:1.2}
+.starry-access-primary{
+  border:0;border-radius:var(--starry-access-radius);
+  background:var(--starry-access-button-bg);color:var(--starry-access-button-text);
+  padding:12px 24px;min-width:168px;font:bold 16px system-ui,sans-serif;cursor:pointer
+}
+.starry-access-close{
+  position:absolute;top:0;right:0;border:0;background:transparent;color:white;
+  font-size:30px;cursor:pointer;width:44px;height:44px
+}
+.starry-access-google{display:flex;justify-content:center;margin-top:16px}
+.starry-access-fallback{display:block;color:#fff;margin-top:12px;font-size:14px}
+.starry-access-status{font-size:13px;color:#ffdee0;margin:14px 0}
+.starry-access-overlay [hidden]{display:none!important}
