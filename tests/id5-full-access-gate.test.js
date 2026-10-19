@@ -5,7 +5,8 @@ import {
   shouldCheckDownloadAccess,
   isDownloadPageRequest,
   resolveDownloadAccess,
-  accessDeniedResponse
+  accessDeniedResponse,
+  downloadAccessStatusResponse
 } from '../cloudflare/download-access-gate.js';
 import {STARRY_APP_GRANT_CUTOFF} from '../cloudflare/central-app-access.js';
 
@@ -43,14 +44,14 @@ function request(path='/',cookie=COOKIE,method='GET') {
   return new Request('https://download.starry.phd'+path,{method,headers:cookie?{Cookie:cookie}:{}});
 }
 
-test('download page, account, history, report, install and all functional APIs are protected',()=>{
-  for(const path of ['/','/account','/history','/report','/install','/api/info','/api/download',
+test('homepage is public, but account, history and every App API remain protected',()=>{
+  for(const path of ['/account','/history','/report','/install','/api/info','/api/download',
     '/api/reports','/api/favorites','/api/download-history','/api/advanced/download',
     '/api/download/'+'a'.repeat(32)+'/file','/api/push/subscribe',
     '/api/auth/starry/session']) {
     assert.equal(shouldCheckDownloadAccess(new URL('https://download.starry.phd'+path),'GET'),true,path);
   }
-  for(const path of ['/static/access-gate.js','/static/service-worker.js','/api/health','/favicon.ico']) {
+  for(const path of ['/','/static/access-gate.js','/static/starry-account-switch.js','/static/service-worker.js','/api/health','/favicon.ico']) {
     assert.equal(shouldCheckDownloadAccess(new URL('https://download.starry.phd'+path),'GET'),false,path);
   }
   assert.equal(shouldCheckDownloadAccess(new URL('https://download.starry.phd/static/access-gate.js'),'POST'),true);
@@ -69,16 +70,16 @@ test('anonymous guest is blocked before any central database requests',async()=>
   assert.match(page.headers.get('Content-Type'),/text\/html/);
   assert.match(page.headers.get('Cache-Control'),/no-store/);
   const html=await page.text();
-  assert.match(html,/您沒有使用權限/);
-  assert.match(html,/請先登入/);
-  assert.match(html,/id="fallback-login"/);
-  assert.match(html,/id="google-login"/);
-  assert.match(html,/background:rgba\(0,0,0,\.86\)/);
+  assert.match(html,/您尚未開通本服務/);
+  assert.match(html,/id="access-action"/);
+  assert.match(html,/登入/);
+  assert.match(html,/static\/starry-account-switch\.js/);
+  assert.match(html,/background:rgba\(0,0,0,\.80\)/);
   assert.doesNotMatch(html,/請聯絡管理員|請聯絡繁星管理員/);
   assert.doesNotMatch(html,/ecosystem-sso\.js|brand-sync\.js|location\.reload/);
 });
 
-test('a denied signed-in member sees ONLY the forbidden message, never a retrying script',async()=>{
+test('denied signed-in member gets 80-percent gate and a global switch-account control',async()=>{
   const {db,readQueries}=dbFor('deny');
   const result=await resolveDownloadAccess(request('/'),{STARRY_ID_DB:db});
   assert.deepEqual(result,{status:'denied',code:'APP_ACCESS_DENIED'});
@@ -86,9 +87,13 @@ test('a denied signed-in member sees ONLY the forbidden message, never a retryin
   const response=accessDeniedResponse(request('/'),result);
   assert.equal(response.status,403);
   const html=await response.text();
-  assert.match(html,/<h1>您沒有使用權限<\/h1>/);
-  assert.doesNotMatch(html,/請先登入|請聯絡|id="google-login"|access-gate\.js|ecosystem-sso\.js/);
+  assert.match(html,/<h1>您尚未開通本服務<\/h1>/);
+  assert.match(html,/切換身分/);
+  assert.match(html,/static\/starry-account-switch\.js/);
+  assert.doesNotMatch(html,/請先登入|請聯絡|ecosystem-sso\.js/);
   assert.equal(response.headers.get('X-Frame-Options'),'DENY');
+  const privateGate=accessDeniedResponse(request('/account'),result);
+  assert.match(privateGate.headers.get('Content-Security-Policy'),/connect-src 'self' https:\/\/id\.starry\.phd/);
 });
 
 test('denied, anonymous and interrupted API operations fail closed with clear statuses',async()=>{
@@ -126,7 +131,7 @@ test('inactive membership and inactive member are denied even when access is all
   assert.equal((await resolveDownloadAccess(request('/'),{STARRY_ID_DB:u.db})).status,'denied');
 });
 
-test('unavailable D1 fails closed and cannot accidentally open the homepage',async()=>{
+test('unavailable D1 fails closed for protected routes and cannot expose data',async()=>{
   assert.equal((await resolveDownloadAccess(request('/'),{})).status,'unavailable');
   const page=accessDeniedResponse(request('/'),{status:'unavailable'});
   assert.equal(page.status,503);
@@ -146,16 +151,35 @@ test('Worker gates HTML/API before downloader, background sync and reports',()=>
   assert.match(source('cloudflare/central-sso.js'),/Set-Cookie':SESSION_COOKIE\+'=;/);
 });
 
-test('Denied local session never forces SSO refresh or another login ticket',()=>{
-  const js=source('static/ecosystem-sso.js');
+test('Public page never starts automatic SSO loops and central switch is ecosystem-wide',()=>{
+  const worker=source('cloudflare/worker.js');
+  const legacy=source('static/ecosystem-sso.js');
   const gate=source('static/access-gate.js');
-  assert.doesNotThrow(()=>new Function(js));
+  const shared=source('static/starry-account-switch.js');
+  assert.doesNotThrow(()=>new Function(legacy));
   assert.doesNotThrow(()=>new Function(gate));
-  assert.match(js,/data\?\.code === 'APP_ACCESS_DENIED'/);
-  assert.match(js,/if \(local\?\.denied\) \{ showDeniedMask\(\); return; \}/);
-  assert.match(js,/if \(await localLogout\(\)\) reloadOnce\(\)/);
-  assert.match(gate,/function showDenied\(\)/);
-  assert.doesNotMatch(gate,/setInterval\(/);
+  assert.doesNotThrow(()=>new Function(shared));
+  assert.match(worker,/starry-account-switch\.js/);
+  assert.match(worker,/\/api\/download-access\/status/);
+  assert.match(gate,/window\.addEventListener\('click',clickGuard,true\)/);
+  assert.match(gate,/function markStale\(\)/);
+  assert.match(gate,/textContent=status==='denied'\?'切換身分':'登入'/);
+  assert.doesNotMatch(legacy,/window\.setTimeout\(\(\) => void sync\(true\), 0\)/);
+  assert.match(shared,/appId:'starry-id'/);
+  assert.match(shared,/const \[app,shared\]=await Promise\.all\(\[local\(\),central\(\)\]\)/);
+  assert.match(shared,/await logoutLocal\(\);/);
   assert.doesNotMatch(gate,/location\.reload\(/);
-  assert.match(gate,/window\.location\.replace\('\/auth\/callback\?code='/);
+  assert.doesNotMatch(shared,/location\.reload\(/);
+});
+
+test('Central status API does not expose denied identities and is always uncached',()=>{
+  const allowed=downloadAccessStatusResponse({status:'allowed',userId:'u-123'});
+  assert.equal(allowed.status,200);
+  assert.equal(allowed.headers.get('Cache-Control'),'private, no-store, max-age=0');
+  const denied=downloadAccessStatusResponse({status:'denied',userId:'u-123'});
+  assert.equal(denied.status,403);
+  return Promise.all([allowed.json(),denied.json()]).then(([ok,no])=>{
+    assert.equal(ok.userId,'u-123');
+    assert.ok(!('userId' in no));
+  });
 });

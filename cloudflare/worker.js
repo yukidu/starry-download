@@ -1,7 +1,7 @@
 import {Container} from '@cloudflare/containers';
 import {digest, handleRequest} from './access.js';
 import {handleCentralSso} from './central-sso.js';
-import {shouldCheckDownloadAccess, isDownloadPageRequest, resolveDownloadAccess, accessDeniedResponse} from './download-access-gate.js';
+import {shouldCheckDownloadAccess, isDownloadPageRequest, resolveDownloadAccess, accessDeniedResponse, downloadAccessStatusResponse} from './download-access-gate.js';
 import {handleDownloadHistoryRequest, recordDownloadStart} from './history.js';
 import {handlePushRequest, notifyReportCreated, saveReportPushState} from './push.js';
 import {enforceMemberReport, handleReportRepairRequest} from './report-repair.js';
@@ -33,6 +33,11 @@ async function enhanceProductionPage(response) {
 
   let html = await response.text();
   html = html.replaceAll('繁星下載', '繁星捕手').replaceAll('Starry ID', '繁星通行證');
+  // Install the lazy gesture gate BEFORE the old site scripts. Anonymous
+  // visitors see the actual landing page, but interactions are checked once.
+  if (!html.includes('/static/starry-account-switch.js')) {
+    html = html.replace('</body>', '<script src="/static/starry-account-switch.js"></script><script src="/static/access-gate.js"></script></body>');
+  }
   if (!html.includes('/static/brand-sync.js')) {
     html = html.replace('</body>', '<script src="/static/brand-sync.js"></script><script src="/static/ecosystem-sso.js"></script></body>');
   } else if (!html.includes('/static/ecosystem-sso.js')) {
@@ -59,9 +64,17 @@ async function fetchHandler(request, env, ctx) {
 
   const url = new URL(request.url);
   const method = request.method.toUpperCase();
-  // Authoritative check BEFORE rendering any App page or running any
-  // download/report/member API. A blocked account must never start the
-  // container or load the old automatic SSO synchronization script.
+  // Root HTML is intentionally public. No entitlement check occurs
+  // until the first visitor interaction. APIs and private pages retain
+  // server-side protection, independent of browser JavaScript or overlays.
+  if (url.pathname==='/api/download-access/status' && method==='GET') {
+    try {
+      return downloadAccessStatusResponse(await resolveDownloadAccess(request,env));
+    } catch(error) {
+      console.error('Download Starry access status unavailable',error);
+      return downloadAccessStatusResponse({status:'unavailable'});
+    }
+  }
   if (shouldCheckDownloadAccess(url,method)) {
     if (isDownloadPageRequest(url,method) && url.searchParams.get('starry')==='denied')
       return accessDeniedResponse(request,{status:'denied'});
@@ -69,7 +82,7 @@ async function fetchHandler(request, env, ctx) {
       const access=await resolveDownloadAccess(request,env);
       if(access.status!=='allowed') return accessDeniedResponse(request,access);
     } catch(error) {
-      console.error('Download Starry access gate temporarily unavailable',error);
+      console.error('Download Starry protected request unavailable',error);
       return accessDeniedResponse(request,{status:'unavailable'});
     }
   }
