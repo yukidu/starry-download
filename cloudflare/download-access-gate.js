@@ -28,7 +28,7 @@ export function isDownloadPageRequest(url, method) {
 export function downloadAccessStatusResponse(result) {
   const status=result.status==='allowed'?200:
     result.status==='login_required'?401:result.status==='unavailable'?503:403;
-  return Response.json({status:result.status},{
+  return Response.json({status:result.status, ...(result.status==='allowed' ? {userId:result.userId} : {})},{
     status,
     headers:{
       'Cache-Control':'private, no-store, max-age=0',
@@ -78,13 +78,13 @@ function gateHtml(status) {
   const login = status === 'login_required';
   const unavailable = status === 'unavailable';
   const title = unavailable ? '權限驗證暫時無法使用' : '您尚未開通本服務';
-  const sub = login ? '<p class="sub">請先登入</p>' : '';
+  const sub = '';
   const action = unavailable ? '' :
     '<div class="sign-in"><button type="button" id="access-action" class="login-button">'+
     (login?'登入':'切換身分')+
     '</button><div id="google-login" hidden></div><a id="fallback-login" href="/api/auth/starry/login?choose=1" hidden>選擇其他 Google 帳號</a></div><p id="login-status" role="status" hidden></p>';
   const script = unavailable ? '' :
-    '<script src="https://accounts.google.com/gsi/client" async defer></script><script src="/static/access-gate.js" defer></script>';
+    '<script src="/static/starry-account-switch.js"></script><script src="/static/access-gate.js"></script>';
   return `<!doctype html>
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -104,7 +104,7 @@ h1{font-size:clamp(23px,5vw,31px);line-height:1.35;letter-spacing:.03em;margin:0
   padding:12px 22px;border:0;border-radius:12px;background:#f3f6ff;color:#101827;font:750 16px system-ui,sans-serif;cursor:pointer}
 #login-status{font-size:13px;line-height:1.5;color:#efc7cc;margin-top:16px}
 [hidden]{display:none!important}
-</style></head><body><div class="access-mask" id="starry-access-gate" role="main">
+</style></head><body><div class="access-mask" id="starry-access-gate" data-status="${status}" role="main">
 <main class="access-content">
 <svg class="access-lock" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
 <h1>${title}</h1>${sub}${action}</main></div>${script}</body></html>`;
