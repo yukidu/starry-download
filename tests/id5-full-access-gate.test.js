@@ -72,7 +72,7 @@ test('anonymous guest is blocked before any central database requests',async()=>
   const html=await page.text();
   assert.match(html,/您尚未開通本服務/);
   assert.match(html,/id="access-action"/);
-  assert.match(html,/切換身分/);
+  assert.match(html,/登入/);
   assert.match(html,/static\/starry-account-switch\.js/);
   assert.match(html,/background:rgba\(0,0,0,\.80\)/);
   assert.doesNotMatch(html,/請聯絡管理員|請聯絡繁星管理員/);
