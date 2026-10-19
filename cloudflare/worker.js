@@ -74,7 +74,7 @@ async function fetchHandler(request, env, ctx) {
   // server-side protection, independent of browser JavaScript or overlays.
   if (url.pathname==='/api/download-access/status' && method==='GET') {
     try {
-      return downloadAccessStatusResponse(await resolveDownloadAccess(request,env));
+      return downloadAccessStatusResponse(await resolveDownloadAccess(request,env,{publicInteraction:true}));
     } catch(error) {
       console.error('Download Starry access status unavailable',error);
       return downloadAccessStatusResponse({status:'unavailable'});
