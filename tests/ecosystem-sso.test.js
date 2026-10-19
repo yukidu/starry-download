@@ -13,12 +13,16 @@ test('繁星捕手以 Starry ID 中央 session 與一次性票證承接登入', 
   assert.match(sso, /\/auth\/callback/);
 });
 
-test('登入可直接在繁星捕手內選 Google 帳號', async () => {
+test('登入或切換身分會更新整個 Starry ID 共用會員身份', async () => {
   const sso = await read('static/ecosystem-sso.js');
-  assert.match(sso, /accounts\.google\.com\/gsi\/client/);
-  assert.match(sso, /api\/google-sync/);
-  assert.match(sso, /appId: 'downloadstarry'/);
-  assert.match(sso, /完成後會留在繁星捕手/);
+  const shared = await read('static/starry-account-switch.js');
+  const gate = await read('static/access-gate.js');
+  assert.match(shared, /accounts\.google\.com\/gsi\/client/);
+  assert.match(shared, /api\/google-sync/);
+  assert.match(shared, /appId:'starry-id'/);
+  assert.match(shared, /api\/apps\/downloadstarry\/ticket/);
+  assert.match(gate, /切換身分/);
+  assert.match(sso, /StarryDownloadIdentity\.switchGlobal/);
 });
 
 test('繁星捕手不共用或直接讀取 Starry ID 敏感 Cookie', async () => {
@@ -31,11 +35,13 @@ test('繁星捕手不共用或直接讀取 Starry ID 敏感 Cookie', async () =>
   assert.doesNotMatch(files, /starry_id_session/);
 });
 
-test('登入登出與帳號切換會在回到頁面時重新確認中央身份', async () => {
+test('回到頁面時只標示需驗證，不會自動重新整理或換帳號', async () => {
   const sso = await read('static/ecosystem-sso.js');
-  assert.match(sso, /window\.addEventListener\('focus'/);
-  assert.match(sso, /visibilitychange/);
-  assert.match(sso, /window\.addEventListener\('online'/);
+  const gate = await read('static/access-gate.js');
+  assert.match(gate, /window\.addEventListener\('focus',markStale\)/);
+  assert.match(gate, /visibilitychange/);
+  assert.match(gate, /window\.addEventListener\('click',clickGuard,true\)/);
   assert.match(sso, /centralLogout/);
-  assert.match(sso, /localId === centralId/);
+  assert.doesNotMatch(sso, /window\.setTimeout\(\(\) => void sync\(true\), 0\)/);
+  assert.doesNotMatch(gate, /location\.reload/);
 });
