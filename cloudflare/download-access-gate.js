@@ -137,6 +137,6 @@ export function accessDeniedResponse(request, result) {
   return new Response(request.method==='HEAD'?null:gateHtml(result.status),{
     status:responseStatus,
     headers:{...headers,'Content-Type':'text/html; charset=utf-8',
-      'Content-Security-Policy':"default-src 'none'; script-src 'self' https://accounts.google.com; style-src 'unsafe-inline'; img-src 'self' https://accounts.google.com data:; frame-src https://accounts.google.com; connect-src https://id.starry.phd; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}
+      'Content-Security-Policy':"default-src 'none'; script-src 'self' https://accounts.google.com; style-src 'unsafe-inline'; img-src 'self' https://accounts.google.com data:; frame-src https://accounts.google.com; connect-src 'self' https://id.starry.phd; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"}
   });
 }
