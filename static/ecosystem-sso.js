@@ -117,13 +117,17 @@
   }
 
   function showDeniedMask() {
+    if (window.StarryDownloadInteractionGate) {
+      window.StarryDownloadInteractionGate.showDenied();
+      return;
+    }
     if (document.getElementById('starry-access-denied')) return;
     const mask = document.createElement('div');
     mask.id = 'starry-access-denied';
     mask.setAttribute('role','alert');
-    mask.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(0,0,0,.86);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);color:white;text-align:center';
+    mask.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(0,0,0,.80);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);color:white;text-align:center';
     const title = document.createElement('h1');
-    title.textContent = '您沒有使用權限';
+    title.textContent = '您尚未開通本服務';
     title.style.cssText = 'font:800 clamp(23px,5vw,31px)/1.4 system-ui,sans-serif';
     mask.appendChild(title);
     document.body.appendChild(mask);
@@ -188,21 +192,15 @@
 
   async function completeGoogleLogin(credential) {
     if (!credential) return setStatus('沒有取得 Google 登入資料，請再試一次。');
-    setStatus('正在登入繁星通行證…');
+    setStatus('正在切換 Starry ID 共用身分…');
     try {
-      const response = await originalFetch(`${CENTRAL}/api/google-sync`, {
-        method: 'POST',
-        credentials: 'include',
-        cache: 'no-store',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({credential, appId: 'downloadstarry'})
-      });
-      const data = await readJson(response);
-      if (!response.ok || !data?.success) throw new Error(data?.error || '登入失敗');
+      const status=await window.StarryDownloadIdentity.switchGlobal(credential);
+      if(status==='redirecting')return;
       closeOverlay();
-      await sync(true);
-    } catch (error) {
-      setStatus(error?.message || '登入失敗，請再試一次。');
+      if(status==='denied')showDeniedMask();
+      else setStatus('登入服務暫時無法使用');
+    }catch(error){
+      setStatus(error?.message||'登入失敗，請再試一次。');
     }
   }
 
@@ -234,6 +232,10 @@
   }
 
   function showLogin() {
+    if (window.StarryDownloadInteractionGate) {
+      window.StarryDownloadInteractionGate.showLogin();
+      return;
+    }
     if (overlay) return;
     installStyles();
     overlay = document.createElement('div');
@@ -289,22 +291,13 @@
 
   watchBrand();
   loadGoogle();
-  window.addEventListener('focus', () => {
-    normalizeBrand();
-    void sync();
-  });
-  window.addEventListener('online', () => void sync(true));
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      normalizeBrand();
-      void sync();
-    }
-  });
-  window.setTimeout(() => void sync(true), 0);
+  // Public landing pages never auto-redirect on load, focus, online or
+  // visibility changes. Only a deliberate user interaction can check access.
+  window.addEventListener('focus', normalizeBrand);
 
   window.StarryCatcherAuth = Object.freeze({
     login: showLogin,
-    sync: () => sync(true),
+    sync: () => window.StarryDownloadInteractionGate?.check(),
     logoutAll: async () => {
       await Promise.allSettled([localLogout(), centralLogout()]);
       reloadOnce();
