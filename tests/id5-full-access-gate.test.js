@@ -74,12 +74,12 @@ test('anonymous guest is blocked before any central database requests',async()=>
   assert.match(html,/id="access-action"/);
   assert.match(html,/登入/);
   assert.match(html,/static\/starry-account-switch\.js/);
-  assert.match(html,/background:rgba\(0,0,0,\.80\)/);
+  assert.match(html,/background:rgba\(0,0,0,\.60\)/);
   assert.doesNotMatch(html,/請聯絡管理員|請聯絡繁星管理員/);
   assert.doesNotMatch(html,/ecosystem-sso\.js|brand-sync\.js|location\.reload/);
 });
 
-test('denied signed-in member gets 80-percent gate and a global switch-account control',async()=>{
+test('denied signed-in member gets 60-percent gate and a global switch-account control',async()=>{
   const {db,readQueries}=dbFor('deny');
   const result=await resolveDownloadAccess(request('/'),{STARRY_ID_DB:db});
   assert.deepEqual(result,{status:'denied',code:'APP_ACCESS_DENIED'});
@@ -89,6 +89,7 @@ test('denied signed-in member gets 80-percent gate and a global switch-account c
   const html=await response.text();
   assert.match(html,/<h1>您尚未開通本服務<\/h1>/);
   assert.match(html,/切換身分/);
+  assert.match(html,/background:rgba\(0,0,0,\.60\)/);
   assert.match(html,/static\/starry-account-switch\.js/);
   assert.doesNotMatch(html,/請先登入|請聯絡|ecosystem-sso\.js/);
   assert.equal(response.headers.get('X-Frame-Options'),'DENY');

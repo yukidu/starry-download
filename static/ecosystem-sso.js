@@ -125,7 +125,7 @@
     const mask = document.createElement('div');
     mask.id = 'starry-access-denied';
     mask.setAttribute('role','alert');
-    mask.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(0,0,0,.80);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);color:white;text-align:center';
+    mask.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:24px;box-sizing:border-box;background:rgba(0,0,0,.60);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);color:white;text-align:center';
     const title = document.createElement('h1');
     title.textContent = '您尚未開通本服務';
     title.style.cssText = 'font:800 clamp(23px,5vw,31px)/1.4 system-ui,sans-serif';

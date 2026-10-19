@@ -19,7 +19,7 @@
     style.textContent=[
       '.starry-access-overlay{position:fixed;inset:0;z-index:2147483647;',
       'display:grid;place-items:center;box-sizing:border-box;padding:24px;',
-      'background:rgba(0,0,0,.80);color:#fff;text-align:center;',
+      'background:rgba(0,0,0,.60);color:#fff;text-align:center;',
       'font-family:system-ui,-apple-system,sans-serif}',
       '.starry-access-panel{position:relative;width:min(430px,100%);padding:16px}',
       '.starry-access-panel h1{font-size:clamp(23px,5vw,31px);',
@@ -57,11 +57,13 @@
     mask.className='starry-access-overlay';
     mask.setAttribute('role','dialog');
     mask.setAttribute('aria-modal','true');
-    mask.setAttribute('aria-label',status==='unavailable'
-      ?'權限驗證暫時無法使用':'您尚未開通本服務');
+    mask.setAttribute('aria-label',status==='checking'
+      ?'正在確認權限…':status==='unavailable'
+        ?'權限驗證暫時無法使用':'您尚未開通本服務');
+    if(status==='checking')mask.setAttribute('aria-busy','true');
     const panel=document.createElement('div');
     panel.className='starry-access-panel';
-    if(!serverPage){
+    if(!serverPage && status!=='checking'){
       const close=document.createElement('button');
       close.type='button';close.className='starry-access-close';
       close.setAttribute('aria-label','關閉');
@@ -78,10 +80,10 @@
     lock.setAttribute('aria-hidden','true');
     panel.appendChild(lock);
     const title=document.createElement('h1');
-    title.textContent=status==='unavailable'
-      ?'權限驗證暫時無法使用':'您尚未開通本服務';
+    title.textContent=status==='checking'?'正在確認權限…':
+      status==='unavailable'?'權限驗證暫時無法使用':'您尚未開通本服務';
     panel.appendChild(title);
-    if(status!=='unavailable'){
+    if(status!=='unavailable' && status!=='checking'){
       const action=document.createElement('button');
       action.type='button';
       action.className='starry-access-primary';
@@ -129,6 +131,9 @@
   async function check(){
     if(checking||switching||approved)return;
     checking=true;
+    // Synchronous render BEFORE the first awaited login/D1 request:
+    // no 2-second blank period, and no unverified "denied" accusation.
+    show('checking');
     try{
       const status=await identity.check();
       if(status==='allowed'){approved=true;hide();return;}
