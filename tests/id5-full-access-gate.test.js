@@ -51,7 +51,7 @@ test('homepage is public, but account, history and every App API remain protecte
     '/api/auth/starry/session']) {
     assert.equal(shouldCheckDownloadAccess(new URL('https://download.starry.phd'+path),'GET'),true,path);
   }
-  for(const path of ['/','/static/access-gate.js','/static/starry-account-switch.js','/static/service-worker.js','/api/health','/favicon.ico']) {
+  for(const path of ['/','/static/access-gate.js','/static/starry-account-switch.js','/static/starry-access-ui.js','/static/starry-access.css','/static/service-worker.js','/api/health','/favicon.ico']) {
     assert.equal(shouldCheckDownloadAccess(new URL('https://download.starry.phd'+path),'GET'),false,path);
   }
   assert.equal(shouldCheckDownloadAccess(new URL('https://download.starry.phd/static/access-gate.js'),'POST'),true);
@@ -71,10 +71,10 @@ test('anonymous guest is blocked before any central database requests',async()=>
   assert.match(page.headers.get('Cache-Control'),/no-store/);
   const html=await page.text();
   assert.match(html,/您尚未開通本服務/);
-  assert.match(html,/id="access-action"/);
+  assert.match(html,/class="starry-access-overlay"/);
   assert.match(html,/登入/);
   assert.match(html,/static\/starry-account-switch\.js/);
-  assert.match(html,/background:rgba\(0,0,0,\.60\)/);
+  assert.match(html,/static\/starry-access\.css/);
   assert.doesNotMatch(html,/請聯絡管理員|請聯絡繁星管理員/);
   assert.doesNotMatch(html,/ecosystem-sso\.js|brand-sync\.js|location\.reload/);
 });
@@ -89,7 +89,7 @@ test('denied signed-in member gets 60-percent gate and a global switch-account c
   const html=await response.text();
   assert.match(html,/<h1>您尚未開通本服務<\/h1>/);
   assert.match(html,/切換身分/);
-  assert.match(html,/background:rgba\(0,0,0,\.60\)/);
+  assert.match(html,/static\/starry-access\.css/);
   assert.match(html,/static\/starry-account-switch\.js/);
   assert.doesNotMatch(html,/請先登入|請聯絡|ecosystem-sso\.js/);
   assert.equal(response.headers.get('X-Frame-Options'),'DENY');
@@ -164,13 +164,50 @@ test('Public page never starts automatic SSO loops and central switch is ecosyst
   assert.match(worker,/\/api\/download-access\/status/);
   assert.match(gate,/window\.addEventListener\('click',clickGuard,true\)/);
   assert.match(gate,/function markStale\(\)/);
-  assert.match(gate,/textContent=status==='denied'\?'切換身分':'登入'/);
+  assert.match(source('static/starry-access-ui.js'),/textContent=state==='denied'\?'切換身分':'登入'/);
   assert.doesNotMatch(legacy,/window\.setTimeout\(\(\) => void sync\(true\), 0\)/);
   assert.match(shared,/appId:'starry-id'/);
   assert.match(shared,/const \[app,shared\]=await Promise\.all\(\[local\(\),central\(\)\]\)/);
   assert.match(shared,/await logoutLocal\(\);/);
   assert.doesNotMatch(gate,/location\.reload\(/);
   assert.doesNotMatch(shared,/location\.reload\(/);
+});
+
+test('anonymous guest policy defaults denied; only homepage status may report guest_allowed',async()=>{
+  const reads=[];
+  const db={prepare(sql){
+    reads.push(sql);
+    return {bind(appId){
+      assert.equal(appId,'downloadstarry');
+      return {first:async()=>({allowed:1})};
+    }};
+  }};
+  const guest=await resolveDownloadAccess(request('/',null),{STARRY_ID_DB:db},{publicInteraction:true});
+  assert.equal(guest.status,'guest_allowed');
+  assert.equal(reads.length,1);
+  assert.match(reads[0],/starry_guest_app_policies/);
+  const apiDenied=await resolveDownloadAccess(request('/api/download',null,'POST'),{STARRY_ID_DB:db});
+  assert.equal(apiDenied.status,'login_required');
+  assert.equal(reads.length,1,'Private API must never inherit guest browse policy');
+  const status=downloadAccessStatusResponse(guest);
+  assert.equal(status.status,200);
+  assert.deepEqual(await status.json(),{status:'guest_allowed'});
+  const missing={prepare(){throw new Error('table missing')}};
+  assert.equal((await resolveDownloadAccess(request('/',null),{STARRY_ID_DB:missing},{publicInteraction:true})).status,'login_required');
+});
+test('Shared visual tokens are the only styling source for all three authorization states',()=>{
+  const css=source('static/starry-access.css');
+  const renderer=source('static/starry-access-ui.js');
+  const worker=source('cloudflare/worker.js');
+  assert.match(css,/--starry-access-black-opacity: \.60/);
+  assert.match(css,/background:var\(--starry-access-overlay\)/);
+  assert.match(renderer,/checking:'正在確認權限…'/);
+  assert.match(renderer,/denied:'您尚未開通本服務'/);
+  assert.match(renderer,/login_required:'您尚未開通本服務'/);
+  assert.match(worker,/static\/starry-access-ui\.js/);
+  assert.match(worker,/static\/starry-access\.css/);
+  assert.doesNotMatch(source('static/access-gate.js'),/rgba\(0,0,0/);
+  assert.doesNotMatch(source('cloudflare/download-access-gate.js'),/rgba\(0,0,0/);
 });
 
 test('Central status API does not expose denied identities and is always uncached',()=>{
