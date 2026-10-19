@@ -77,37 +77,156 @@ test('Already synchronized central/local authorized identity requires no extra t
   assert.ok(!env.calls.some(c=>c.url.includes('ticket')||c.url.includes('logout')));
 });
 
-test('First interaction triggers checks without background navigation, then caches approval',async()=>{
+
+function gestureHarness(){
   const calls=[],events={},docEvents={};
+  let pending=null;
+
+  function el(tagName){
+    return {
+      tagName,children:[],parent:null,id:'',textContent:'',dataset:{},attrs:{},listeners:{},
+      hidden:false,style:{},isConnected:true,
+      setAttribute(name,value){this.attrs[name]=value;},
+      addEventListener(type,handler){this.listeners[type]=handler;},
+      appendChild(child){child.parent=this;this.children.push(child);return child;},
+      remove(){
+        if(this.parent){
+          const i=this.parent.children.indexOf(this);
+          if(i>=0)this.parent.children.splice(i,1);
+        }
+        this.parent=null;this.isConnected=false;
+      },
+      replaceWith(next){
+        if(!this.parent)throw Error('detached');
+        const i=this.parent.children.indexOf(this);
+        this.parent.children[i]=next;
+        next.parent=this.parent;
+        this.parent=null;this.isConnected=false;
+      },
+      contains(target){
+        return this===target||this.children.some(node=>node.contains(target));
+      },
+      querySelector(selector){
+        if(selector==='[data-access-error]')
+          return this.children.find(node=>node.dataset?.accessError)||this.children
+            .map(node=>node.querySelector(selector)).find(Boolean)||null;
+        return null;
+      }
+    };
+  }
+  const head=el('head'),body=el('body');
+  function walk(node,id){
+    if(node.id===id)return node;
+    for(const child of node.children){const found=walk(child,id);if(found)return found;}
+    return null;
+  }
   const document={
-    getElementById:()=>null,
-    createElement:()=>({id:'',textContent:'',dataset:{}}),
-    head:{appendChild(){}},
-    addEventListener:(event,fn)=>{docEvents[event]=fn},
-    activeElement:null
+    head,body,activeElement:null,
+    getElementById:id=>walk(head,id)||walk(body,id),
+    createElement:el,
+    addEventListener:(event,callback)=>{docEvents[event]=callback;}
   };
   const window={
     StarryDownloadIdentity:{
-      check:async()=>{calls.push('check');return 'allowed';},
+      check(){
+        calls.push('check');
+        return new Promise((resolve,reject)=>{pending={resolve,reject};});
+      },
       accountChooser(){},
       switchGlobal:async()=> 'denied'
     },
-    addEventListener:(event,fn)=>{events[event]=fn}
+    addEventListener:(name,handler)=>{events[name]=handler;}
   };
   vm.runInNewContext(source('static/access-gate.js'),{
     window,document,Date,Promise
   });
-  assert.deepEqual(calls,[],'No automatic access checks at page load');
-  assert.equal(typeof events.click,'function');
-  const event={isTrusted:true,target:{},preventDefault(){},stopImmediatePropagation(){}};
-  events.click(event);
-  await new Promise(done=>setTimeout(done,0));
-  assert.deepEqual(calls,['check']);
-  events.click(event);
-  await new Promise(done=>setTimeout(done,0));
-  assert.deepEqual(calls,['check'],'Approved interactions should not cause repeated D1 reads');
-  events.focus();
-  events.click(event);
-  await new Promise(done=>setTimeout(done,0));
-  assert.deepEqual(calls,['check','check'],'After focus, a new click verifies common Starry identity');
+  const mask=()=>document.getElementById('starry-access-gate');
+  const children=()=>mask()?.children?.[0]?.children||[];
+  const heading=()=>children().find(node=>node.tagName==='h1')?.textContent;
+  const button=()=>children().find(node=>node.tagName==='button'&&node.textContent!=='×')?.textContent;
+  const click=()=>{
+    const event={
+      isTrusted:true,target:el('a'),
+      preventDefault(){},stopImmediatePropagation(){}
+    };
+    events.click(event);
+  };
+  return {window,document,calls,events,docEvents,mask,children,heading,button,
+    click,settle:value=>pending.resolve(value),reject:error=>pending.reject(error)};
+}
+
+const finish=()=>new Promise(done=>setImmediate(done));
+
+test('Click paints the 60-percent checking overlay synchronously before any auth request settles',async()=>{
+  const screen=gestureHarness();
+  assert.equal(screen.mask(),null,'No overlay or rights check on page load');
+  assert.deepEqual(screen.calls,[]);
+  const css=screen.document.getElementById('starry-download-access-css');
+  assert.match(css.textContent,/background:rgba\(0,0,0,\.60\)/);
+  screen.click();
+  assert.equal(screen.heading(),'正在確認權限…','Pending screen must appear within the click handler');
+  assert.equal(screen.button(),undefined,'Pending auth cannot falsely show login/switch actions');
+  assert.equal(screen.mask().attrs['aria-busy'],'true');
+  assert.equal(screen.mask().attrs['aria-label'],'正在確認權限…');
+  assert.equal(screen.calls.length,1,'Exactly one login check started');
+  screen.click();
+  assert.equal(screen.calls.length,1,'Repeated click while pending cannot spawn duplicate API requests');
+  screen.settle('denied');
+  await finish();
+  assert.equal(screen.heading(),'您尚未開通本服務');
+  assert.equal(screen.button(),'切換身分');
+});
+
+test('A permitted member sees the immediate pending overlay removed after authorization',async()=>{
+  const screen=gestureHarness();
+  screen.click();
+  assert.equal(screen.heading(),'正在確認權限…');
+  screen.settle('allowed');
+  await finish();
+  assert.equal(screen.mask(),null,'Approved member must not remain blocked');
+  screen.click();
+  assert.equal(screen.calls.length,1,'Verified session avoids unnecessary D1 lookups');
+  screen.events.focus();
+  screen.click();
+  assert.equal(screen.heading(),'正在確認權限…','Focus never checks until another click');
+  assert.equal(screen.calls.length,2);
+  screen.settle('allowed');
+  await finish();
+  assert.equal(screen.mask(),null);
+});
+
+test('Guest, outage, and denied member have the correct final screen only after verification',async()=>{
+  for(const [status,heading,button] of [
+    ['login_required','您尚未開通本服務','登入'],
+    ['unavailable','權限驗證暫時無法使用',undefined],
+    ['denied','您尚未開通本服務','切換身分']
+  ]){
+    const screen=gestureHarness();
+    screen.click();
+    assert.equal(screen.heading(),'正在確認權限…');
+    screen.settle(status);
+    await finish();
+    assert.equal(screen.heading(),heading);
+    assert.equal(screen.button(),button);
+  }
+  const error=gestureHarness();
+  error.click();
+  error.reject(new Error('network-failure'));
+  await finish();
+  assert.equal(error.heading(),'權限驗證暫時無法使用');
+});
+
+test('Keyboard activation checks immediately and cannot bypass pending permissions',async()=>{
+  const screen=gestureHarness();
+  screen.document.activeElement={matches:()=>true};
+  const event={
+    key:'Enter',isTrusted:true,
+    preventDefault(){},stopImmediatePropagation(){}
+  };
+  assert.equal(screen.mask(),null);
+  screen.events.keydown(event);
+  assert.equal(screen.heading(),'正在確認權限…');
+  screen.settle('allowed');
+  await finish();
+  assert.equal(screen.mask(),null);
 });
