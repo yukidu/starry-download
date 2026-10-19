@@ -14,7 +14,7 @@
       const response=await request('/api/download-access/status',{
         credentials:'same-origin',cache:'no-store',headers:{Accept:'application/json'}});
       const data=await json(response);
-      return ['allowed','denied','login_required','unavailable'].includes(data.status)
+      return ['allowed','guest_allowed','denied','login_required','unavailable'].includes(data.status)
         ? data:{status:'unavailable'};
     }catch{return {status:'unavailable'};}
   }
@@ -63,6 +63,9 @@
       if(app.status==='allowed'||app.status==='denied')await logoutLocal();
       return useCentralIdentity();
     }
+    // A guest policy can unlock ONLY harmless homepage UI interactions.
+    // Logged-in members never inherit guest privileges to override a denial.
+    if(shared?.authenticated===false && app.status==='guest_allowed')return 'allowed';
     if(shared===null && app.status==='allowed')return 'allowed';
     if(shared?.authenticated===false && app.status==='allowed')await logoutLocal();
     if(shared===null && app.status==='denied')return 'denied';
