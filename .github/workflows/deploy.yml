@@ -102,3 +102,63 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm exec wrangler deploy
+
+      - name: Verify production Starry ID SSO routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          user_agent='Starry-Deploy-Smoke/1.0'
+
+          download_headers="$(mktemp)"
+          download_ok=0
+          for attempt in $(seq 1 12); do
+            : > "$download_headers"
+            status="$(curl -sS --max-time 20 -A "$user_agent" -D "$download_headers" -o /dev/null -w '%{http_code}' https://download.starry.phd/api/auth/starry/login || true)"
+            location="$(tr -d '\r' < "$download_headers" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]+:[[:space:]]*/, ""); print; exit}')"
+            if [ "$status" = '302' ] && [ "$location" = 'https://id.starry.phd/auth/downloadstarry' ]; then
+              download_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$download_ok" -ne 1 ]; then
+            echo 'Production login route did not redirect to Starry ID as expected.'
+            cat "$download_headers"
+            exit 1
+          fi
+
+          central_body="$(mktemp)"
+          central_ok=0
+          for attempt in $(seq 1 12); do
+            status="$(curl -sS --max-time 20 -A "$user_agent" -o "$central_body" -w '%{http_code}' https://id.starry.phd/auth/downloadstarry || true)"
+            if [ "$status" = '200' ] && grep -Fq 'Starry ID × 繁星下載' "$central_body"; then
+              central_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$central_ok" -ne 1 ]; then
+            echo 'Starry ID DownloadStarry login page is not healthy.'
+            head -c 1000 "$central_body" || true
+            exit 1
+          fi
+
+          callback_headers="$(mktemp)"
+          callback_ok=0
+          for attempt in $(seq 1 12); do
+            : > "$callback_headers"
+            status="$(curl -sS --max-time 20 -A "$user_agent" -D "$callback_headers" -o /dev/null -w '%{http_code}' https://download.starry.phd/auth/callback || true)"
+            location="$(tr -d '\r' < "$callback_headers" | awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]+:[[:space:]]*/, ""); print; exit}')"
+            if [ "$status" = '302' ] && [ "$location" = 'https://download.starry.phd/account?starry=error' ]; then
+              callback_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$callback_ok" -ne 1 ]; then
+            echo 'Production DownloadStarry callback route is not healthy.'
+            cat "$callback_headers"
+            exit 1
+          fi
+
+          echo 'Production SSO smoke test passed: DownloadStarry -> Starry ID -> DownloadStarry callback routes are healthy.'
